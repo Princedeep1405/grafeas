@@ -1,25 +1,36 @@
+# .github/workflows/grafeas-audit.yml
 name: Grafeas Audit Trail
 
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
-  GRAFEAS_ADDR: grafeas.example.com:8080   # Update if your server is elsewhere
   PROJECT_ID: openai
+  GRAFEAS_ADDR: localhost:8080
 
 jobs:
   bootstrap-notes:
     name: Bootstrap Grafeas Notes
     runs-on: ubuntu-latest
+    services:
+      grafeas:
+        image: gcr.io/grafeas/grafeas-server:latest
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd="grpcurl -plaintext localhost:8080 list"
+          --health-interval=10s
+          --health-retries=5
+
     steps:
       - uses: actions/checkout@v3
 
-      # Install unzip (needed below)
       - name: Install unzip
         run: sudo apt-get update && sudo apt-get install -y unzip
 
-      # Download & install protoc binary
       - name: Install protoc
         run: |
           PROTOC_VERSION=21.12
@@ -29,14 +40,12 @@ jobs:
           sudo mv protoc3/include/* /usr/local/include/
           rm -rf protoc.zip protoc3
 
-      # Download & install grpcurl
       - name: Install grpcurl
         run: |
           GRPCURL_VERSION=1.8.8
           curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin
 
-      # Generate the Grafeas descriptor set
       - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
@@ -49,7 +58,6 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
-      # Create BUILD note
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
@@ -58,7 +66,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create DEPLOYMENT note
       - name: Create DEPLOYMENT note
         run: |
           grpcurl -plaintext \
@@ -67,7 +74,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create VULNERABILITY note
       - name: Create VULNERABILITY note
         run: |
           grpcurl -plaintext \
@@ -81,11 +87,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: bootstrap-notes
     services:
+      grafeas:
+        image: gcr.io/grafeas/grafeas-server:latest
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd="grpcurl -plaintext localhost:8080 list"
+          --health-interval=10s
+          --health-retries=5
       docker:
         image: docker:20.10.16
         options: --privileged
         ports:
           - 2375:2375
+
     steps:
       - uses: actions/checkout@v3
 
@@ -112,6 +127,16 @@ jobs:
     name: Deploy & Record
     runs-on: ubuntu-latest
     needs: build-and-scan
+    services:
+      grafeas:
+        image: gcr.io/grafeas/grafeas-server:latest
+        ports:
+          - 8080:8080
+        options: >-
+          --health-cmd="grpcurl -plaintext localhost:8080 list"
+          --health-interval=10s
+          --health-retries=5
+
     steps:
       - name: Emit DEPLOYMENT occurrence
         run: |
