@@ -1,3 +1,4 @@
+# .github/workflows/grafeas-audit.yml
 name: Grafeas Audit Trail
 
 on:
@@ -17,11 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Install protoc (the Google protobuf compiler)
+      # Install protoc via zchee/setup-protoc
       - name: Set up protoc
-        uses: milaboratory/setup-protoc@v1
+        uses: zchee/setup-protoc@v1
         with:
-          protocVersion: '3.21.12'   # match your local version
+          version: '21.12'
 
       # Install grpcurl
       - name: Set up grpcurl
@@ -29,7 +30,7 @@ jobs:
         with:
           version: '1.8.8'
 
-      # Clone Google common protos & generate a single descriptor set
+      # Clone Google common protos & generate Grafeas descriptor set
       - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
@@ -42,7 +43,7 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
-      # Create the three Notes
+      # Create BUILD note
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
@@ -51,6 +52,7 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
+      # Create DEPLOYMENT note
       - name: Create DEPLOYMENT note
         run: |
           grpcurl -plaintext \
@@ -59,6 +61,7 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
+      # Create VULNERABILITY note
       - name: Create VULNERABILITY note
         run: |
           grpcurl -plaintext \
