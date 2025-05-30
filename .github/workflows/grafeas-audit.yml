@@ -8,7 +8,7 @@ on:
     branches: [ main ]
 
 env:
-  GRAFEAS_ADDR: grafeas.example.com:8080   # adjust as needed
+  GRAFEAS_ADDR: grafeas.example.com:8080   # adjust if needed
   PROJECT_ID: openai
 
 jobs:
@@ -18,19 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Install protoc via zchee/setup-protoc
+      # Install protoc
       - name: Set up protoc
         uses: zchee/setup-protoc@v1
         with:
           version: '21.12'
 
-      # Install grpcurl
-      - name: Set up grpcurl
-        uses: grpc-ecosystem/setup-grpcurl@v1
-        with:
-          version: '1.8.8'
+      # Install grpcurl by downloading the Linux binary
+      - name: Install grpcurl
+        run: |
+          curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v1.8.8/grpcurl_1.8.8_linux_x86_64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin
 
-      # Clone Google common protos & generate Grafeas descriptor set
+      # Generate a Grafeas descriptor set
       - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
@@ -43,7 +43,7 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
-      # Create BUILD note
+      # Create the three Notes
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
@@ -52,7 +52,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create DEPLOYMENT note
       - name: Create DEPLOYMENT note
         run: |
           grpcurl -plaintext \
@@ -61,7 +60,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create VULNERABILITY note
       - name: Create VULNERABILITY note
         run: |
           grpcurl -plaintext \
