@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  GRAFEAS_ADDR: grafeas.example.com:8080   # or localhost:8080 if self-hosted
+  GRAFEAS_ADDR: grafeas.example.com:8080   # adjust as needed
   PROJECT_ID: openai
 
 jobs:
@@ -17,12 +17,20 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Install prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y grpcurl git unzip protobuf-compiler
+      # Install protoc (the Google protobuf compiler)
+      - name: Set up protoc
+        uses: milaboratory/setup-protoc@v1
+        with:
+          protocVersion: '3.21.12'   # match your local version
 
-      - name: Clone googleapis & generate Grafeas protoset
+      # Install grpcurl
+      - name: Set up grpcurl
+        uses: grpc-ecosystem/setup-grpcurl@v1
+        with:
+          version: '1.8.8'
+
+      # Clone Google common protos & generate a single descriptor set
+      - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
           mkdir -p .gha
@@ -34,6 +42,7 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
+      # Create the three Notes
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
