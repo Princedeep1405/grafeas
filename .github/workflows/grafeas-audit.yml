@@ -3,30 +3,36 @@ name: Grafeas Audit Trail
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
-  GRAFEAS_ADDR: grafeas.example.com:8080       # or localhost:8080 if self-hosted
+  GRAFEAS_ADDR: grafeas.example.com:8080   # or localhost:8080 if self-hosted
   PROJECT_ID: openai
 
 jobs:
   bootstrap-notes:
     name: Bootstrap Grafeas Notes
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v3
 
       - name: Install prerequisites
         run: |
-          sudo apt-get update &&
-          sudo apt-get install -y grpcurl git unzip
+          sudo apt-get update
+          sudo apt-get install -y grpcurl git unzip protobuf-compiler
 
-      - name: Ensure descriptor set
+      - name: Clone googleapis & generate Grafeas protoset
         run: |
-          if [ ! -f ./.gha/grafeas-v1beta1.protoset ]; then
-            echo "Error: grafeas-v1beta1.protoset missing in .gha/";
-            exit 1;
-          fi
+          git clone https://github.com/googleapis/googleapis.git googleapis
+          mkdir -p .gha
+          protoc \
+            -I . \
+            -I googleapis \
+            --include_imports \
+            --include_source_info \
+            --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
+            proto/v1beta1/*.proto
 
       - name: Create BUILD note
         run: |
@@ -93,6 +99,6 @@ jobs:
         run: |
           grpcurl -plaintext \
             -protoset ./.gha/grafeas-v1beta1.protoset \
-            -d '{"parent":"projects/'"${PROJECT_ID}"'","occurrence":{"noteName":"projects/'"${PROJECT_ID}"'/notes/'"${{ github.repository }}'-deploy","resourceUri":"docker://'${{ github.repository }}':latest","deployment":{"deployment":{"userEmail":"'"${{ github.actor }}"'@users.noreply.github.com","deployTime":"'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'","address":"k8s-cluster-1","platform":"GKE","config":"helm-chart:v1.2.3"}}}}' \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","occurrence":{"noteName":"projects/'"${PROJECT_ID}"'/notes/'"${{ github.repository }}'-deploy","resourceUri":"docker://'${{ github.repository }}':latest","deployment":{"deployment":{"userEmail":"'"${{ github.actor }}"'@users.noreply.github.com","deployTime":"'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'"}}}}' \
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateOccurrence
