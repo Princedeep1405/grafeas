@@ -1,14 +1,11 @@
-# .github/workflows/grafeas-audit.yml
 name: Grafeas Audit Trail
 
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 env:
-  GRAFEAS_ADDR: grafeas.example.com:8080   # adjust if needed
+  GRAFEAS_ADDR: grafeas.example.com:8080   # Update if your server is elsewhere
   PROJECT_ID: openai
 
 jobs:
@@ -18,19 +15,28 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # Install protoc
-      - name: Set up protoc
-        uses: zchee/setup-protoc@v1
-        with:
-          version: '21.12'
+      # Install unzip (needed below)
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip
 
-      # Install grpcurl by downloading the Linux binary
+      # Download & install protoc binary
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=21.12
+          curl -sSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
+          unzip protoc.zip -d protoc3
+          sudo mv protoc3/bin/protoc /usr/local/bin/
+          sudo mv protoc3/include/* /usr/local/include/
+          rm -rf protoc.zip protoc3
+
+      # Download & install grpcurl
       - name: Install grpcurl
         run: |
-          curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v1.8.8/grpcurl_1.8.8_linux_x86_64.tar.gz" \
+          GRPCURL_VERSION=1.8.8
+          curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin
 
-      # Generate a Grafeas descriptor set
+      # Generate the Grafeas descriptor set
       - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
@@ -43,7 +49,7 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
-      # Create the three Notes
+      # Create BUILD note
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
@@ -52,6 +58,7 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
+      # Create DEPLOYMENT note
       - name: Create DEPLOYMENT note
         run: |
           grpcurl -plaintext \
@@ -60,6 +67,7 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
+      # Create VULNERABILITY note
       - name: Create VULNERABILITY note
         run: |
           grpcurl -plaintext \
