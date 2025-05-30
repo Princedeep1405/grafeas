@@ -1,0 +1,98 @@
+name: Grafeas Audit Trail
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  GRAFEAS_ADDR: grafeas.example.com:8080       # or localhost:8080 if self-hosted
+  PROJECT_ID: openai
+
+jobs:
+  bootstrap-notes:
+    name: Bootstrap Grafeas Notes
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update &&
+          sudo apt-get install -y grpcurl git unzip
+
+      - name: Ensure descriptor set
+        run: |
+          if [ ! -f ./.gha/grafeas-v1beta1.protoset ]; then
+            echo "Error: grafeas-v1beta1.protoset missing in .gha/";
+            exit 1;
+          fi
+
+      - name: Create BUILD note
+        run: |
+          grpcurl -plaintext \
+            -protoset ./.gha/grafeas-v1beta1.protoset \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","noteId":"'${{ github.repository }}'-build","note":{"kind":"BUILD","build":{"builderVersion":"gha-1.0.0"}}}' \
+            $GRAFEAS_ADDR \
+            grafeas.v1beta1.GrafeasV1Beta1.CreateNote
+
+      - name: Create DEPLOYMENT note
+        run: |
+          grpcurl -plaintext \
+            -protoset ./.gha/grafeas-v1beta1.protoset \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","noteId":"'${{ github.repository }}'-deploy","note":{"kind":"DEPLOYMENT","deployable":{"resourceUri":["https://github.com/'"${{ github.repository }}"']}}}' \
+            $GRAFEAS_ADDR \
+            grafeas.v1beta1.GrafeasV1Beta1.CreateNote
+
+      - name: Create VULNERABILITY note
+        run: |
+          grpcurl -plaintext \
+            -protoset ./.gha/grafeas-v1beta1.protoset \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","noteId":"'${{ github.repository }}'-vuln","note":{"kind":"VULNERABILITY","shortDescription":"CI-driven vuln scan for '"${{ github.repository }}"'","vulnerability":{"severity":"UNSPECIFIED"}}}' \
+            $GRAFEAS_ADDR \
+            grafeas.v1beta1.GrafeasV1Beta1.CreateNote
+
+  build-and-scan:
+    name: Build & Scan
+    runs-on: ubuntu-latest
+    needs: bootstrap-notes
+    services:
+      docker:
+        image: docker:20.10.16
+        options: --privileged
+        ports:
+          - 2375:2375
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build Docker Image
+        run: docker build -t "${{ github.repository }}:latest" .
+
+      - name: Emit BUILD occurrence
+        run: |
+          grpcurl -plaintext \
+            -protoset ./.gha/grafeas-v1beta1.protoset \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","occurrence":{"noteName":"projects/'"${PROJECT_ID}"'/notes/'"${{ github.repository }}'-build","resourceUri":"docker://'${{ github.repository }}':latest","build":{"provenance":{"id":"build-'${{ github.run_id }}'","projectId":"'"${PROJECT_ID}"'","commands":[{"name":"docker build","args":["-t","'"${{ github.repository }}':latest"]}],"createTime":"'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'"}}}}' \
+            $GRAFEAS_ADDR \
+            grafeas.v1beta1.GrafeasV1Beta1.CreateOccurrence
+
+      - name: Run container-scanning plugin
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e GRAFEAS_ADDR=$GRAFEAS_ADDR \
+            gcr.io/grafeas/container-scanning:latest \
+              image "${{ github.repository }}:latest" --project="$PROJECT_ID"
+
+  deploy:
+    name: Deploy & Record
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    steps:
+      - name: Emit DEPLOYMENT occurrence
+        run: |
+          grpcurl -plaintext \
+            -protoset ./.gha/grafeas-v1beta1.protoset \
+            -d '{"parent":"projects/'"${PROJECT_ID}"'","occurrence":{"noteName":"projects/'"${PROJECT_ID}"'/notes/'"${{ github.repository }}'-deploy","resourceUri":"docker://'${{ github.repository }}':latest","deployment":{"deployment":{"userEmail":"'"${{ github.actor }}"'@users.noreply.github.com","deployTime":"'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'","address":"k8s-cluster-1","platform":"GKE","config":"helm-chart:v1.2.3"}}}}' \
+            $GRAFEAS_ADDR \
+            grafeas.v1beta1.GrafeasV1Beta1.CreateOccurrence
