@@ -1,47 +1,62 @@
 name: Grafeas Audit Trail
 
-# Run on pushes or PRs to main (or change to master if that's your default)
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 env:
-  # ← Update this to your real, reachable Grafeas host:port
-  GRAFEAS_ADDR: grafeas.mydomain.com:8080
   PROJECT_ID: openai
+  GRAFEAS_ADDR: localhost:8080
 
 jobs:
-  bootstrap-notes:
-    name: Bootstrap Grafeas Notes
+  full-ci:
+    name: Full Grafeas CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      # Install unzip (needed for protoc zip)
-      - name: Install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip
+      # 1. Install unzip (for protoc zip), build tools
+      - name: Install unzip & curl
+        run: sudo apt-get update && sudo apt-get install -y unzip curl
 
-      # Download & install protoc binary
+      # 2. Install protoc
       - name: Install protoc
         run: |
           PROTOC_VERSION=21.12
-          curl -sSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
+          curl -sSL \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
             -o protoc.zip
           unzip protoc.zip -d protoc3
           sudo mv protoc3/bin/protoc /usr/local/bin/
           sudo mv protoc3/include/* /usr/local/include/
           rm -rf protoc.zip protoc3
 
-      # Download & install grpcurl
+      # 3. Install grpcurl
       - name: Install grpcurl
         run: |
           GRPCURL_VERSION=1.8.8
-          curl -sSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
+          curl -sSL \
+            "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin
 
-      # Generate a descriptor set for v1beta1 protos
+      # 4. Build your local Grafeas server image
+      - name: Build Grafeas server
+        run: docker build -t grafeas-server:latest .
+
+      # 5. Start Grafeas server in background
+      - name: Start Grafeas server
+        run: |
+          docker run -d --name grafeas-server -p 8080:8080 grafeas-server:latest
+          # wait until grpcurl can list services
+          for i in {1..10}; do
+            if grpcurl -plaintext localhost:8080 list; then
+              echo "Grafeas is up"; break
+            fi
+            echo "Waiting for Grafeas..."; sleep 2
+          done
+
+      # 6. Generate the v1beta1 protoset
       - name: Generate Grafeas descriptor set
         run: |
           git clone https://github.com/googleapis/googleapis.git googleapis
@@ -54,7 +69,7 @@ jobs:
             --descriptor_set_out=.gha/grafeas-v1beta1.protoset \
             proto/v1beta1/*.proto
 
-      # Create BUILD note
+      # 7. Create the three Notes
       - name: Create BUILD note
         run: |
           grpcurl -plaintext \
@@ -63,7 +78,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create DEPLOYMENT note
       - name: Create DEPLOYMENT note
         run: |
           grpcurl -plaintext \
@@ -72,7 +86,6 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-      # Create VULNERABILITY note
       - name: Create VULNERABILITY note
         run: |
           grpcurl -plaintext \
@@ -81,20 +94,7 @@ jobs:
             $GRAFEAS_ADDR \
             grafeas.v1beta1.GrafeasV1Beta1.CreateNote
 
-  build-and-scan:
-    name: Build & Scan
-    runs-on: ubuntu-latest
-    needs: bootstrap-notes
-    services:
-      docker:
-        image: docker:20.10.16
-        options: --privileged
-        ports:
-          - 2375:2375
-
-    steps:
-      - uses: actions/checkout@v3
-
+      # 8. Build & scan your Docker image
       - name: Build Docker Image
         run: docker build -t "${{ github.repository }}:latest" .
 
@@ -114,12 +114,7 @@ jobs:
             gcr.io/grafeas/container-scanning:latest \
               image "${{ github.repository }}:latest" --project="$PROJECT_ID"
 
-  deploy:
-    name: Deploy & Record
-    runs-on: ubuntu-latest
-    needs: build-and-scan
-
-    steps:
+      # 9. Emit DEPLOYMENT occurrence
       - name: Emit DEPLOYMENT occurrence
         run: |
           grpcurl -plaintext \
